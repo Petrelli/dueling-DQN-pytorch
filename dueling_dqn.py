@@ -1,4 +1,3 @@
-import gym
 import torch
 import torch.nn as nn
 import numpy as np
@@ -6,8 +5,60 @@ from collections import deque
 import random
 from itertools import count
 import torch.nn.functional as F
+import matplotlib.pyplot as plt
+import torch
+import numpy as np
+import sys
+import ast
+from Importance import updateImp
+from Node import Node
+from Eva import evaluate, getPopRatio, detectCongestion
+from Size import updateSize, updateReq
+from Popularity import updatePop
+from CreateTopo import createTopo
 from tensorboardX import SummaryWriter
 
+
+# define parameters
+HM_EPISODES = 3000
+EXPLORE_EPISODES = 0 # 20
+MAX_EPISODES = 80
+SHOW_EVERY = 1
+BATCH_SIZE = 64
+LR = 5e-4
+EPSILON_START = 0.02 #0.5
+EPSILON_MID =  0.5
+EPSILON_END = 0.9 #0.8
+DECAY_RATE = 0.98
+#EPSILON = EPSILON_START
+GAMMA = 0.9
+TARGET_REPLACE_ITER = 40 #100 when the total num of episodes is 200
+MEMORY_CAPACITY = int(1e8) # int(1e8)
+t_ = 1
+
+# set action, state, and NN parameters
+
+#env = gym.make('CartPole-v0')
+n_state = 4
+n_action = 512
+
+
+# read the input data from a file
+file = open(sys.argv[1], 'r')
+contents = file.read()
+requests = ast.literal_eval(contents)
+file.close()
+
+# read routing table
+rTable = createTopo(sys.argv[2])
+
+# init nodes
+backHaulBW = 1000
+nodes = {}
+nodeIDs = [1, 2, 3, 4, 5, 6]
+for ID in nodeIDs:
+    node = Node(1000, ID, 0.5*backHaulBW)
+    nodes.update({ID: node})
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
@@ -16,13 +67,13 @@ class QNetwork(nn.Module):
     def __init__(self):
         super(QNetwork, self).__init__()
 
-        self.fc1 = nn.Linear(4, 64)
+        self.fc1 = nn.Linear(n_state, 128)
         self.relu = nn.ReLU()
-        self.fc_value = nn.Linear(64, 256)
-        self.fc_adv = nn.Linear(64, 256)
+        self.fc_value = nn.Linear(128, 256)
+        self.fc_adv = nn.Linear(256, 512)
 
-        self.value = nn.Linear(256, 1)
-        self.adv = nn.Linear(256, 2)
+        self.value = nn.Linear(512, 1024)
+        self.adv = nn.Linear(1024, n_action)
 
     def forward(self, state):
         y = self.relu(self.fc1(state))
@@ -69,9 +120,7 @@ class Memory(object):
         self.buffer.clear()
 
 
-env = gym.make('CartPole-v0')
-n_state = env.observation_space.shape[0]
-n_action = env.action_space.n
+
 
 onlineQNetwork = QNetwork().to(device)
 targetQNetwork = QNetwork().to(device)
